@@ -101,8 +101,9 @@ const pad = (num: number): string => {
 
 class AudioRecorderPlayer {
   private _isRecording: boolean;
+  private _recordingPaused: boolean;
   private _isPlaying: boolean;
-  private _hasPaused: boolean;
+  private _playbackPaused: boolean;
   private _recorderSubscription: EmitterSubscription;
   private _playerSubscription: EmitterSubscription;
   private _recordInterval: number;
@@ -188,6 +189,9 @@ class AudioRecorderPlayer {
     meteringEnabled?: boolean,
     audioSets?: AudioSet,
   ): Promise<string> => {
+    if (this._recordingPaused) {
+      return RNAudioRecorderPlayer.resumeRecorder()
+    }
     if (!uri) {
       uri = 'DEFAULT';
     }
@@ -200,6 +204,31 @@ class AudioRecorderPlayer {
       return RNAudioRecorderPlayer.startRecorder(uri, meteringEnabled, audioSets);
     }
     return 'Already recording';
+  };
+
+  /**
+   * pause recording.
+   * @returns {Promise<string>}
+   */
+  pauseRecorder = async (): Promise<string> => {
+    if (this._isRecording && !this._recordingPaused) {
+      this._recordingPaused = true;
+      return RNAudioRecorderPlayer.pauseRecorder();
+    }
+    return 'Already paused';
+  };
+
+  /**
+   * resume recording.
+   * @returns {Promise<string>}
+   */
+  resumeRecorder = async (): Promise<string> => {
+    if (this._recordingPaused) {
+      this._isRecording = true;
+      this._recordingPaused = false;
+      return RNAudioRecorderPlayer.resumeRecorder();
+    }
+    return 'Not paused';
   };
 
   /**
@@ -220,8 +249,8 @@ class AudioRecorderPlayer {
    */
   resumePlayer = async (): Promise<string> => {
     if (!this._isPlaying) return 'No audio playing';
-    if (this._hasPaused) {
-      this._hasPaused = false;
+    if (this._playbackPaused) {
+      this._playbackPaused = false;
       return RNAudioRecorderPlayer.resumePlayer();
     }
     return 'Already playing';
@@ -236,9 +265,9 @@ class AudioRecorderPlayer {
     if (!uri) {
       uri = 'DEFAULT';
     }
-    if (!this._isPlaying || this._hasPaused) {
+    if (!this._isPlaying || this._playbackPaused) {
       this._isPlaying = true;
-      this._hasPaused = false;
+      this._playbackPaused = false;
       return RNAudioRecorderPlayer.startPlayer(uri);
     }
   };
@@ -250,7 +279,7 @@ class AudioRecorderPlayer {
   stopPlayer = async (): Promise<string> => {
     if (this._isPlaying) {
       this._isPlaying = false;
-      this._hasPaused = false;
+      this._playbackPaused = false;
       return RNAudioRecorderPlayer.stopPlayer();
     }
     return 'Already stopped playing';
@@ -262,8 +291,8 @@ class AudioRecorderPlayer {
    */
   pausePlayer = async (): Promise<string> => {
     if (!this._isPlaying) return 'No audio playing';
-    if (!this._hasPaused) {
-      this._hasPaused = true;
+    if (!this._playbackPaused) {
+      this._playbackPaused = true;
       return RNAudioRecorderPlayer.pausePlayer();
     }
   };

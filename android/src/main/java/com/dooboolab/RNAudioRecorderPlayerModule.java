@@ -12,6 +12,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
+import android.media.audiofx.Visualizer;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -47,6 +48,14 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
   private final ReactApplicationContext reactContext;
   private MediaRecorder mediaRecorder;
   private MediaPlayer mediaPlayer;
+
+  private Visualizer mVisualizer;
+  private Visualizer.MeasurementPeakRms mMeasurementPeakRms = new Visualizer.MeasurementPeakRms();
+
+  int counterPlayer = 0;
+  static double[] drawingBufferForPlayer = new double[100];
+  private byte[] mBytes;
+  private byte[] mFFTBytes;
 
   private Runnable recorderRunnable;
   private TimerTask mTask;
@@ -122,14 +131,15 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
             int maxAmplitude = 0;
             if (mediaRecorder != null) {
               maxAmplitude = mediaRecorder.getMaxAmplitude();
-
+              Log.d(TAG, "amp max: " + maxAmplitude);
             }
             double dB = -160;
+            // 16-bit audio goes from -32768 to 32767
             double maxAudioSize = 32767;
             if (maxAmplitude > 0){
               dB = 20 * Math.log10(maxAmplitude / maxAudioSize);
             }
-
+            Log.d(TAG, "RECORDING DB: " + (int) dB);
             obj.putInt("current_metering", (int) dB);
           }
           sendEvent(reactContext, "rn-recordback", obj);
@@ -146,11 +156,30 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
   }
 
   @ReactMethod
+  public void pauseRecorder(Promise promise) {
+    if (mediaRecorder == null) {
+      promise.reject("pauseRecord", "recorder is null.");
+      return;
+    }
+    mediaRecorder.pause();
+    promise.resolve("file:///" + audioFileURL);
+  }
+
+  @ReactMethod
+  public void resumeRecorder(Promise promise) {
+    if (mediaRecorder == null) {
+      promise.reject("resumeRecord", "recorder is null.");
+      return;
+    }
+    mediaRecorder.resume();
+    promise.resolve("file:///" + audioFileURL);
+  }
+
+  @ReactMethod
   public void stopRecorder(Promise promise) {
     if (recordHandler != null) {
       recordHandler.removeCallbacks(this.recorderRunnable);
     }
-
     if (mediaRecorder == null) {
       promise.reject("stopRecord", "recorder is null.");
       return;
@@ -158,7 +187,6 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
     mediaRecorder.stop();
     mediaRecorder.release();
     mediaRecorder = null;
-
     promise.resolve("file:///" + audioFileURL);
   }
 
@@ -170,7 +198,6 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
     }
     float mVolume = (float) volume;
     mediaPlayer.setVolume(mVolume, mVolume);
-
     promise.resolve("set volume");
   }
 
@@ -190,6 +217,26 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
       return;
     } else {
       mediaPlayer = new MediaPlayer();
+      // Create the Visualizer object and attach it to our media player.
+      mVisualizer = new Visualizer(mediaPlayer.getAudioSessionId());
+      mVisualizer.setMeasurementMode(Visualizer.MEASUREMENT_MODE_PEAK_RMS);
+      mVisualizer.setCaptureSize(Visualizer.getCaptureSizeRange()[1]);
+
+      // Pass through Visualizer data to VisualizerView
+      Visualizer.OnDataCaptureListener captureListener = new Visualizer.OnDataCaptureListener() {
+        @Override
+        public void onWaveFormDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
+          updateVisualizer(bytes);
+        }
+
+        @Override
+        public void onFftDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
+          updateVisualizerFFT(bytes);
+        }
+      };
+
+      mVisualizer.setDataCaptureListener(captureListener, Visualizer.getMaxCaptureRate() / 2, true, true);
+      mVisualizer.setEnabled(true);
     }
     try {
       if (path.equals("DEFAULT")) {
@@ -200,7 +247,6 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
       mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
         @Override
         public void onPrepared(final MediaPlayer mp) {
-          Log.d(TAG, "mediaplayer prepared and start");
           mp.start();
 
           /**
@@ -210,8 +256,18 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
             @Override
             public void run() {
               WritableMap obj = Arguments.createMap();
+              int meteringDb = -160;
+              if (mVisualizer.getEnabled()) {
+                int success = mVisualizer.getMeasurementPeakRms(mMeasurementPeakRms);
+                if (success == Visualizer.SUCCESS) {
+                  int peakmB = mMeasurementPeakRms.mPeak;
+                  meteringdB = (int) peakmB / 100;
+                  Log.d(TAG, "update VIS db: " + meteringdB);
+                }
+              }
               obj.putInt("duration", mp.getDuration());
               obj.putInt("current_position", mp.getCurrentPosition());
+              obj.putInt("current_metering", meteringdB);
               sendEvent(reactContext, "rn-playback", obj);
             }
           };
@@ -240,7 +296,8 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
           /**
            * Reset player.
            */
-          Log.d(TAG, "Plays completed.");
+          Log.d(TAG, "Plays completed. SETTING FALSE");
+          mVisualizer.setEnabled(false);
           mTimer.cancel();
           mp.stop();
           mp.release();
@@ -276,7 +333,6 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
       Log.e(TAG, "mediaPlayer resume: " + e.getMessage());
       promise.reject("resume", e.getMessage());
     }
-
   }
 
   @ReactMethod
@@ -353,5 +409,68 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
         break;
     }
     return false;
+  }
+
+  public void updateVisualizer(byte[] bytes) {
+    int t = calculateRMSLevel(bytes);
+    // if (mVisualizer.getEnabled()) {
+    //   int success = mVisualizer.getMeasurementPeakRms(mMeasurementPeakRms);
+    //   int rmsMb = mMeasurementPeakRms.mRms;
+    //   int rmsDb = (int) rmsMb / 100;
+    // }
+    mBytes = bytes;
+  }
+
+  /**
+   * Pass FFT data to the visualizer. Typically this will be obtained from the
+   * Android Visualizer.OnDataCaptureListener call back. See
+   * {@link android.media.audiofx.Visualizer.OnDataCaptureListener#onFftDataCapture }
+   * 
+   * @param bytes
+   */
+  public void updateVisualizerFFT(byte[] bytes) {
+    int t = calculateRMSLevel(bytes);
+    Log.d(TAG, "update FFT: " + t);
+    mFFTBytes = bytes;
+  }
+
+  public int calculateRMSLevel(byte[] audioData) {
+    // System.out.println("::::: audioData :::::"+audioData);
+    // double amplitude = 0;
+    // for (int i = 0; i < audioData.length; i++) {
+    //   amplitude += Math.abs((double) (audioData[i] / 32768.0));
+    // }
+    // amplitude = amplitude / audioData.length;
+
+
+    double amplitude = 0;
+    if (audioData == null) {
+      Log.d(TAG, "NULL AUDIO DATA -- RETURN NULL");
+      return (int) amplitude;
+    }
+
+    for (int i = 0; i < audioData.length/2; i++) {
+      double y = (audioData[i*2] | audioData[i*2+1] << 8) / 32768.0;
+      // depending on your endianness:
+      // double y = (audioData[i*2]<<8 | audioData[i*2+1]) / 32768.0
+      amplitude += Math.abs(y);
+     }
+    amplitude = amplitude / (audioData.length / 2);
+
+
+    // Add this data to buffer for display
+    if (counterPlayer < 100) {
+      drawingBufferForPlayer[counterPlayer++] = amplitude;
+    } else {
+      for (int k = 0; k < 99; k++) {
+        drawingBufferForPlayer[k] = drawingBufferForPlayer[k + 1];
+      }
+      drawingBufferForPlayer[99] = amplitude;
+    }
+
+    // updateBufferDataPlayer(drawingBufferForPlayer);
+    // setDataForPlayer(100, 100);
+    Log.d(TAG, "AMPLITUDE: " + amplitude);
+    return (int) amplitude;
   }
 }

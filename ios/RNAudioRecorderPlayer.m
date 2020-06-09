@@ -31,9 +31,16 @@ double subscriptionDuration = 0.1;
 
   // Send last event then finish it.
   // NSString* status = [NSString stringWithFormat:@"{\"duration\": \"%@\", \"current_position\": \"%@\"}", [duration stringValue], [currentTime stringValue]];
+    
+  NSNumber *currentMetering = [NSNumber numberWithDouble:0];
+  if (_meteringEnabled) {
+    [audioPlayer updateMeters];
+    currentMetering = [NSNumber numberWithDouble:[audioPlayer averagePowerForChannel: 0]];
+  }
   NSDictionary *status = @{
                          @"duration" : [duration stringValue],
                          @"current_position" : [duration stringValue],
+                         @"current_metering" : [currentMetering stringValue],
                          };
   [self sendEventWithName:@"rn-playback" body: status];
   if (playTimer != nil) {
@@ -73,10 +80,16 @@ double subscriptionDuration = 0.1;
   }
 
   // NSString* status = [NSString stringWithFormat:@"{\"duration\": \"%@\", \"current_position\": \"%@\"}", [duration stringValue], [currentTime stringValue]];
-  NSDictionary *status = @{
-                         @"duration" : [duration stringValue],
-                         @"current_position" : [currentTime stringValue],
-                         };
+    NSNumber *currentMetering = [NSNumber numberWithDouble:0];
+    if (_meteringEnabled) {
+      [audioPlayer updateMeters];
+      currentMetering = [NSNumber numberWithDouble:[audioPlayer averagePowerForChannel: 0]];
+    }
+    NSDictionary *status = @{
+                           @"duration" : [duration stringValue],
+                           @"current_position" : [currentTime stringValue],
+                           @"current_metering" : [currentMetering stringValue],
+                           };
 
   [self sendEventWithName:@"rn-playback" body:status];
 }
@@ -234,6 +247,28 @@ RCT_EXPORT_METHOD(stopRecorder:(RCTPromiseResolveBlock)resolve
     }
 }
 
+RCT_EXPORT_METHOD(pauseRecorder:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    if (audioRecorder) {
+        [audioRecorder pause];
+        NSString *filePath = audioFileURL.absoluteString;
+        resolve(filePath);
+    } else {
+        reject(@"audioRecorder pauseRecorder", @"audioRecorder is not set", nil);
+    }
+}
+
+RCT_EXPORT_METHOD(resumeRecorder:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    if (audioRecorder) {
+        [audioRecorder record];
+        NSString *filePath = audioFileURL.absoluteString;
+        resolve(filePath);
+    } else {
+        reject(@"audioRecorder resumeRecorder", @"audioRecorder is not set", nil);
+    }
+}
+
 RCT_EXPORT_METHOD(setVolume:(double) volume
                   resolve:(RCTPromiseResolveBlock) resolve
                   reject:(RCTPromiseRejectBlock) reject) {
@@ -254,6 +289,7 @@ RCT_EXPORT_METHOD(startPlayer:(NSString*)path
             if (!audioPlayer) {
                 audioPlayer = [[AVAudioPlayer alloc] initWithData:data error:&error];
                 audioPlayer.delegate = self;
+                audioPlayer.meteringEnabled = _meteringEnabled;
             }
 
             // Able to play in silent mode
@@ -288,6 +324,7 @@ RCT_EXPORT_METHOD(startPlayer:(NSString*)path
             RCTLogInfo(@"audio player alloc");
             audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:audioFileURL error:nil];
             audioPlayer.delegate = self;
+            audioPlayer.meteringEnabled = _meteringEnabled;
         }
 
         // Able to play in silent mode
