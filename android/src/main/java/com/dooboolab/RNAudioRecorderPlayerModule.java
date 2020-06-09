@@ -10,6 +10,9 @@ import com.facebook.react.bridge.Callback;
 import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
+import android.media.audiofx.Equalizer;
+import android.media.MediaPlayer;
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.media.audiofx.Visualizer;
@@ -131,7 +134,6 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
             int maxAmplitude = 0;
             if (mediaRecorder != null) {
               maxAmplitude = mediaRecorder.getMaxAmplitude();
-              Log.d(TAG, "amp max: " + maxAmplitude);
             }
             double dB = -160;
             // 16-bit audio goes from -32768 to 32767
@@ -139,7 +141,7 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
             if (maxAmplitude > 0){
               dB = 20 * Math.log10(maxAmplitude / maxAudioSize);
             }
-            Log.d(TAG, "RECORDING DB: " + (int) dB);
+            Log.d(TAG, "update RECORDING DB: " + (int) dB);
             obj.putInt("current_metering", (int) dB);
           }
           sendEvent(reactContext, "rn-recordback", obj);
@@ -217,33 +219,37 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
       return;
     } else {
       mediaPlayer = new MediaPlayer();
+
+
       // Create the Visualizer object and attach it to our media player.
       mVisualizer = new Visualizer(mediaPlayer.getAudioSessionId());
       mVisualizer.setMeasurementMode(Visualizer.MEASUREMENT_MODE_PEAK_RMS);
       mVisualizer.setCaptureSize(Visualizer.getCaptureSizeRange()[1]);
+      mVisualizer.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED);
+
+      // Workaround for phone volume affecting waveform output
+      // https://stackoverflow.com/questions/8048692/android-visualizer-fft-waveform-affected-by-device-volume
+      Equalizer mEqualizer = new Equalizer(0, mediaPlayer.getAudioSessionId());
+      mEqualizer.setEnabled(true); // need to enable equalizer
 
       // Pass through Visualizer data to VisualizerView
-      Visualizer.OnDataCaptureListener captureListener = new Visualizer.OnDataCaptureListener() {
-        @Override
-        public void onWaveFormDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
-          updateVisualizer(bytes);
-        }
+      // Visualizer.OnDataCaptureListener captureListener = new Visualizer.OnDataCaptureListener() {
+      //   @Override
+      //   public void onWaveFormDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
+      //     // updateVisualizer(bytes);
+      //   }
 
-        @Override
-        public void onFftDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
-          updateVisualizerFFT(bytes);
-        }
-      };
+      //   @Override
+      //   public void onFftDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {
+      //     // updateVisualizerFFT(bytes);
+      //   }
+      // };
 
-      mVisualizer.setDataCaptureListener(captureListener, Visualizer.getMaxCaptureRate() / 2, true, true);
+      // mVisualizer.setDataCaptureListener(captureListener, Visualizer.getMaxCaptureRate() / 2, true, true);
       mVisualizer.setEnabled(true);
     }
     try {
-      if (path.equals("DEFAULT")) {
-        mediaPlayer.setDataSource(FILE_LOCATION);
-      } else {
-        mediaPlayer.setDataSource(path);
-      }
+      mediaPlayer.setDataSource(path.equals("DEFAULT") ? FILE_LOCATION : path);
       mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
         @Override
         public void onPrepared(final MediaPlayer mp) {
@@ -256,13 +262,14 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
             @Override
             public void run() {
               WritableMap obj = Arguments.createMap();
-              int meteringDb = -160;
+              int meteringdB = -160;
               if (mVisualizer.getEnabled()) {
                 int success = mVisualizer.getMeasurementPeakRms(mMeasurementPeakRms);
                 if (success == Visualizer.SUCCESS) {
-                  int peakmB = mMeasurementPeakRms.mPeak;
+                  double peakmB = mMeasurementPeakRms.mPeak;
+                  // Peak is measured in millibels, convert to dB
                   meteringdB = (int) peakmB / 100;
-                  Log.d(TAG, "update VIS db: " + meteringdB);
+                  Log.d(TAG, "update PLAYING METERING db: " + meteringdB);
                 }
               }
               obj.putInt("duration", mp.getDuration());
@@ -434,6 +441,15 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
     mFFTBytes = bytes;
   }
 
+  public int calculatePeak(byte[] audioData) {
+    double max = 0;
+    for (int i = 0; i < audioData.length / 2; i++) {
+      double curAmp = (audioData[i] | audioData[i + 1] << 8) / 32768.0;
+      if (curAmp > max) max = curAmp;
+    }
+    return (int) max;
+  }
+
   public int calculateRMSLevel(byte[] audioData) {
     // System.out.println("::::: audioData :::::"+audioData);
     // double amplitude = 0;
@@ -449,8 +465,8 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
       return (int) amplitude;
     }
 
-    for (int i = 0; i < audioData.length/2; i++) {
-      double y = (audioData[i*2] | audioData[i*2+1] << 8) / 32768.0;
+    for (int i = 0; i < audioData.length; i++) {
+      double y = (audioData[i] | audioData[i+1] << 8) / 32768.0;
       // depending on your endianness:
       // double y = (audioData[i*2]<<8 | audioData[i*2+1]) / 32768.0
       amplitude += Math.abs(y);
