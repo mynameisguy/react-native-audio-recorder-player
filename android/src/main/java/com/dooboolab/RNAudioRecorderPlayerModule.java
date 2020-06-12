@@ -204,7 +204,8 @@ public class RNAudioRecorderPlayerModule extends ReactContextBaseJavaModule impl
   }
 
   @ReactMethod
-  public void startPlayer(final String path, final Promise promise) {
+  public void startPlayer(final String path, final Boolean meteringEnabled, final Promise promise) {
+    _meteringEnabled = meteringEnabled;
     if (mediaPlayer != null) {
       Boolean isPaused = !mediaPlayer.isPlaying() && mediaPlayer.getCurrentPosition() > 1;
 

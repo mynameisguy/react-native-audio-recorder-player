@@ -95,6 +95,17 @@ export interface AudioSet {
   AudioEncoderAndroid?: AudioEncoderAndroidType;
 }
 
+type StartRecorderParams = {
+  uri?: string
+  meteringEnabled?: boolean
+  audioSets?: AudioSet
+}
+
+type StartPlayerParams = {
+  uri?: string
+  meteringEnabled?: boolean
+}
+
 const pad = (num: number): string => {
   return ('0' + num).slice(-2);
 };
@@ -184,19 +195,10 @@ class AudioRecorderPlayer {
    * @param {string} uri audio uri.
    * @returns {Promise<string>}
    */
-  startRecorder = async (
-    uri?: string,
-    meteringEnabled?: boolean,
-    audioSets?: AudioSet,
-  ): Promise<string> => {
+
+  startRecorder = async ({ uri = 'DEFAULT', meteringEnabled = true, audioSets }: StartRecorderParams = {}): Promise<string> => {
     if (this._recordingPaused) {
       return RNAudioRecorderPlayer.resumeRecorder()
-    }
-    if (!uri) {
-      uri = 'DEFAULT';
-    }
-    if (!meteringEnabled) {
-      meteringEnabled = false;
     }
 
     if (!this._isRecording) {
@@ -261,14 +263,12 @@ class AudioRecorderPlayer {
    * @param {string} uri audio uri.
    * @returns {Promise<string>}
    */
-  startPlayer = async (uri: string): Promise<string> => {
-    if (!uri) {
-      uri = 'DEFAULT';
-    }
+
+  startPlayer = async ({ uri = 'DEFAULT', meteringEnabled = true }: StartPlayerParams = {}): Promise<string> => {
     if (!this._isPlaying || this._playbackPaused) {
       this._isPlaying = true;
       this._playbackPaused = false;
-      return RNAudioRecorderPlayer.startPlayer(uri);
+      return RNAudioRecorderPlayer.startPlayer(uri, meteringEnabled);
     }
   };
 

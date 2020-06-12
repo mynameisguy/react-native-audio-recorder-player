@@ -277,9 +277,11 @@ RCT_EXPORT_METHOD(setVolume:(double) volume
 }
 
 RCT_EXPORT_METHOD(startPlayer:(NSString*)path
+                  meteringEnabled:(BOOL)meteringEnabled
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject) {
     NSError *error;
+    _meteringEnabled = meteringEnabled;
     if ([[path substringToIndex:4] isEqualToString:@"http"]) {
         audioFileURL = [NSURL URLWithString:path];
 
