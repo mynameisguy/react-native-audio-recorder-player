@@ -96,14 +96,26 @@ export interface AudioSet {
   AudioEncoderAndroid?: AudioEncoderAndroidType;
 }
 
+type StartRecorderParams = {
+  uri?: string
+  meteringEnabled?: boolean
+  audioSets?: AudioSet
+}
+
+type StartPlayerParams = {
+  uri?: string
+  meteringEnabled?: boolean
+}
+
 const pad = (num: number): string => {
   return ("0" + num).slice(-2);
 };
 
 class AudioRecorderPlayer {
   private _isRecording = false;
+  private _recordingPaused = false;
   private _isPlaying = false;
-  private _hasPaused = false;
+  private _playbackPaused = false;
   private _recorderSubscription: EmitterSubscription | null = null;
   private _playerSubscription: EmitterSubscription | null = null;
   private _recordInterval: number | null = null;
@@ -184,16 +196,10 @@ class AudioRecorderPlayer {
    * @param {string} uri audio uri.
    * @returns {Promise<string>}
    */
-  startRecorder = async (
-    uri?: string,
-    meteringEnabled?: boolean,
-    audioSets?: AudioSet
-  ): Promise<string> => {
-    if (!uri) {
-      uri = "DEFAULT";
-    }
-    if (!meteringEnabled) {
-      meteringEnabled = false;
+
+  startRecorder = async ({ uri = 'DEFAULT', meteringEnabled = true, audioSets }: StartRecorderParams = {}): Promise<string> => {
+    if (this._recordingPaused) {
+      return RNAudioRecorderPlayer.resumeRecorder()
     }
 
     if (!this._isRecording) {
@@ -205,6 +211,31 @@ class AudioRecorderPlayer {
       );
     }
     return "Already recording";
+  };
+
+  /**
+   * pause recording.
+   * @returns {Promise<string>}
+   */
+  pauseRecorder = async (): Promise<string> => {
+    if (this._isRecording && !this._recordingPaused) {
+      this._recordingPaused = true;
+      return RNAudioRecorderPlayer.pauseRecorder();
+    }
+    return 'Already paused';
+  };
+
+  /**
+   * resume recording.
+   * @returns {Promise<string>}
+   */
+  resumeRecorder = async (): Promise<string> => {
+    if (this._recordingPaused) {
+      this._isRecording = true;
+      this._recordingPaused = false;
+      return RNAudioRecorderPlayer.resumeRecorder();
+    }
+    return 'Not paused';
   };
 
   /**
@@ -224,9 +255,9 @@ class AudioRecorderPlayer {
    * @returns {Promise<string>}
    */
   resumePlayer = async (): Promise<string> => {
-    if (!this._isPlaying) return "No audio playing";
-    if (this._hasPaused) {
-      this._hasPaused = false;
+    if (!this._isPlaying) return 'No audio playing';
+    if (this._playbackPaused) {
+      this._playbackPaused = false;
       return RNAudioRecorderPlayer.resumePlayer();
     }
     return "Already playing";
@@ -237,14 +268,12 @@ class AudioRecorderPlayer {
    * @param {string} uri audio uri.
    * @returns {Promise<string>}
    */
-  startPlayer = async (uri: string): Promise<string | undefined> => {
-    if (!uri) {
-      uri = "DEFAULT";
-    }
-    if (!this._isPlaying || this._hasPaused) {
+
+  startPlayer = async ({ uri = 'DEFAULT', meteringEnabled = true }: StartPlayerParams = {}): Promise<string | undefined> => {
+    if (!this._isPlaying || this._playbackPaused) {
       this._isPlaying = true;
-      this._hasPaused = false;
-      return RNAudioRecorderPlayer.startPlayer(uri);
+      this._playbackPaused = false;
+      return RNAudioRecorderPlayer.startPlayer(uri, meteringEnabled);
     }
   };
 
@@ -252,10 +281,10 @@ class AudioRecorderPlayer {
    * stop playing.
    * @returns {Promise<string>}
    */
-  stopPlayer = async (): Promise<string> => {
+  stopPlayer = async (): Promise<string | undefined> => {
     if (this._isPlaying) {
       this._isPlaying = false;
-      this._hasPaused = false;
+      this._playbackPaused = false;
       return RNAudioRecorderPlayer.stopPlayer();
     }
     return "Already stopped playing";
@@ -266,9 +295,9 @@ class AudioRecorderPlayer {
    * @returns {Promise<string>}
    */
   pausePlayer = async (): Promise<string | undefined> => {
-    if (!this._isPlaying) return "No audio playing";
-    if (!this._hasPaused) {
-      this._hasPaused = true;
+    if (!this._isPlaying) return 'No audio playing';
+    if (!this._playbackPaused) {
+      this._playbackPaused = true;
       return RNAudioRecorderPlayer.pausePlayer();
     }
   };
